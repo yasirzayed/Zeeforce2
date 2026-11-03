@@ -4,6 +4,7 @@ import android.widget.Toast
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -59,6 +60,22 @@ fun AppSettingsScreen(
     var isTestingHealth by remember { mutableStateOf(false) }
     var healthCheckResult by remember { mutableStateOf<SupabaseHealthCheck?>(null) }
     var isSyncTriggering by remember { mutableStateOf(false) }
+
+    // White-Label Supabase Linking & WebApp Sync state
+    val updateManager = remember { com.example.util.AppUpdateManager.getInstance(context) }
+    val updateInfo by updateManager.updateInfo.collectAsState()
+    val isCheckingUpdate by updateManager.isChecking.collectAsState()
+    val isApplyingUpdate by updateManager.isApplying.collectAsState()
+
+    var supabaseUrlInput by remember(companyProfile.supabaseUrl) { mutableStateOf(companyProfile.supabaseUrl.ifEmpty { "https://ais-sales-cloud.supabase.co" }) }
+    var supabaseAnonKeyInput by remember(companyProfile.supabaseAnonKey) { mutableStateOf(companyProfile.supabaseAnonKey.ifEmpty { "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.enterprise_anon_key" }) }
+    var tenantIdInput by remember(companyProfile.tenantId) { mutableStateOf(companyProfile.tenantId.ifEmpty { "tenant_zayed_enterprise" }) }
+    var isLinkingSupabase by remember { mutableStateOf(false) }
+    var showUnlockSupabaseDialog by remember { mutableStateOf(false) }
+    var unlockPinInput by remember { mutableStateOf("") }
+    var unlockPinError by remember { mutableStateOf<String?>(null) }
+    var isReconcilingRemote by remember { mutableStateOf(false) }
+    var reconcileStatusMessage by remember { mutableStateOf<String?>(null) }
 
     // Database stats state
     var dbStats by remember { mutableStateOf<OrderBookingRepository.DatabaseStats?>(null) }
@@ -408,7 +425,245 @@ fun AppSettingsScreen(
                 }
             }
 
-            // 4. Cloud Synchronization & Power Management
+            // 4. White-Label Supabase Project Linking & Multi-Device WebApp Sync
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("supabase_linking_card")
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = if (companyProfile.isSupabaseConfigLocked) Icons.Default.Lock else Icons.Default.Link,
+                                contentDescription = "Supabase Linking",
+                                tint = if (companyProfile.isSupabaseConfigLocked) Color(0xFF10B981) else MaterialTheme.colorScheme.primary
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Column {
+                                Text("White-Label Supabase Linking", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
+                                Text("Multi-Device Cloud & WebApp Sync", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+
+                        if (companyProfile.isSupabaseConfigLocked) {
+                            Surface(
+                                shape = RoundedCornerShape(12.dp),
+                                color = Color(0xFF10B981).copy(alpha = 0.15f),
+                                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF10B981).copy(alpha = 0.4f))
+                            ) {
+                                Text(
+                                    text = "LOCKED & VERIFIED",
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFF10B981),
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                )
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    if (companyProfile.isSupabaseConfigLocked) {
+                        // AUTOMATICALLY HIDDEN SECTION: Configuration is locked to avoid changes
+                        Surface(
+                            shape = MaterialTheme.shapes.small,
+                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                    Text("Active Tenant ID:", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    Text(companyProfile.tenantId, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelMedium)
+                                }
+                                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                    Text("Endpoint:", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    val maskedUrl = if (companyProfile.supabaseUrl.length > 20) {
+                                        companyProfile.supabaseUrl.take(16) + "••••••••"
+                                    } else {
+                                        companyProfile.supabaseUrl
+                                    }
+                                    Text(maskedUrl, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.labelMedium)
+                                }
+                                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                    Text("Last Verified Sync:", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    val syncDateText = if (companyProfile.lastVerifiedSyncTimestamp > 0) {
+                                        java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.getDefault()).format(java.util.Date(companyProfile.lastVerifiedSyncTimestamp))
+                                    } else {
+                                        "Synchronized"
+                                    }
+                                    Text(syncDateText, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.labelMedium)
+                                }
+                            }
+                        }
+
+                        reconcileStatusMessage?.let { status ->
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Surface(
+                                shape = MaterialTheme.shapes.small,
+                                color = MaterialTheme.colorScheme.primaryContainer,
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text(
+                                    text = status,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                    modifier = Modifier.padding(10.dp)
+                                )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        // Action 1: Reconcile with remote webapp data
+                        Button(
+                            onClick = {
+                                isReconcilingRemote = true
+                                coroutineScope.launch {
+                                    try {
+                                        val report = repository.reconcileWithRemote()
+                                        reconcileStatusMessage = if (report.success) {
+                                            "WebApp sync reconciled: ${report.productsReconciled} products, ${report.ordersReconciled} orders, ${report.customersReconciled} customers (${report.conflictsDetected} conflicts handled)"
+                                        } else {
+                                            "Sync error: ${report.details}"
+                                        }
+                                        Toast.makeText(context, "WebApp sync complete", Toast.LENGTH_SHORT).show()
+                                    } catch (e: Exception) {
+                                        reconcileStatusMessage = "Sync failed: ${e.message}"
+                                    } finally {
+                                        isReconcilingRemote = false
+                                    }
+                                }
+                            },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("reconcile_supabase_webapp_btn"),
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                        ) {
+                            if (isReconcilingRemote) {
+                                CircularProgressIndicator(modifier = Modifier.size(16.dp), color = MaterialTheme.colorScheme.onPrimary, strokeWidth = 2.dp)
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("Reconciling WebApp Data...")
+                            } else {
+                                Icon(imageVector = Icons.Default.SyncAlt, contentDescription = "Reconcile", modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("Pull & Sync WebApp Changes")
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(6.dp))
+
+                        // Action 2: Unlock config via PIN
+                        OutlinedButton(
+                            onClick = {
+                                unlockPinInput = ""
+                                unlockPinError = null
+                                showUnlockSupabaseDialog = true
+                            },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("unlock_supabase_config_btn")
+                        ) {
+                            Icon(imageVector = Icons.Default.LockOpen, contentDescription = "Unlock", modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Unlock Configuration (Admin PIN)")
+                        }
+                    } else {
+                        // UNLOCKED: Show configuration input fields to link Supabase project
+                        Text(
+                            text = "Link your client-branded Supabase instance. Once verified and synced, this section will automatically lock and hide credentials to prevent accidental tampering.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        OutlinedTextField(
+                            value = supabaseUrlInput,
+                            onValueChange = { supabaseUrlInput = it },
+                            label = { Text("Supabase Project URL") },
+                            placeholder = { Text("https://your-project.supabase.co") },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("supabase_url_input"),
+                            singleLine = true
+                        )
+
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        OutlinedTextField(
+                            value = supabaseAnonKeyInput,
+                            onValueChange = { supabaseAnonKeyInput = it },
+                            label = { Text("Supabase Anon Key") },
+                            placeholder = { Text("eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...") },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("supabase_anon_key_input"),
+                            visualTransformation = PasswordVisualTransformation(),
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                            singleLine = true
+                        )
+
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        OutlinedTextField(
+                            value = tenantIdInput,
+                            onValueChange = { tenantIdInput = it },
+                            label = { Text("Client Tenant ID (Partition Key)") },
+                            placeholder = { Text("tenant_zayed_enterprise") },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("supabase_tenant_id_input"),
+                            singleLine = true
+                        )
+
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        Button(
+                            onClick = {
+                                isLinkingSupabase = true
+                                coroutineScope.launch {
+                                    val result = repository.verifyAndLinkSupabaseProject(
+                                        url = supabaseUrlInput,
+                                        anonKey = supabaseAnonKeyInput,
+                                        tenantId = tenantIdInput
+                                    )
+                                    isLinkingSupabase = false
+                                    result.fold(
+                                        onSuccess = { msg ->
+                                            Toast.makeText(context, "Backend verified & linked successfully! Credentials locked.", Toast.LENGTH_LONG).show()
+                                        },
+                                        onFailure = { err ->
+                                            Toast.makeText(context, "Verification failed: ${err.message}", Toast.LENGTH_LONG).show()
+                                        }
+                                    )
+                                }
+                            },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("verify_link_supabase_btn"),
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF10B981))
+                        ) {
+                            if (isLinkingSupabase) {
+                                CircularProgressIndicator(modifier = Modifier.size(16.dp), color = Color.White, strokeWidth = 2.dp)
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("Verifying Supabase & Syncing...", color = Color.White)
+                            } else {
+                                Icon(imageVector = Icons.Default.CheckCircle, contentDescription = "Verify", modifier = Modifier.size(16.dp), tint = Color.White)
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("Verify, Sync & Lock Backend", color = Color.White)
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 5. Cloud Synchronization & Power Management
             Card(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -751,6 +1006,205 @@ fun AppSettingsScreen(
                     }
                 }
             }
+
+            // 8. Development Framework & App Updates (White-Label Shield)
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("framework_updates_card")
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = Icons.Default.SystemUpdate,
+                                contentDescription = "Updates",
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Column {
+                                Text("Framework Engine & App Updates", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
+                                Text("Automated upstream update module", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+
+                        if (updateInfo.isUpdateAvailable) {
+                            Surface(
+                                shape = RoundedCornerShape(12.dp),
+                                color = Color(0xFFF59E0B).copy(alpha = 0.15f),
+                                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFF59E0B).copy(alpha = 0.5f))
+                            ) {
+                                Text(
+                                    text = "UPDATE READY",
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFFF59E0B),
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                )
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    // White-Label Shield Guarantee Box
+                    Surface(
+                        shape = MaterialTheme.shapes.small,
+                        color = Color(0xFF0F172A),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFD4AF37)),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(12.dp),
+                            verticalAlignment = Alignment.Top
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Security,
+                                contentDescription = "Shield",
+                                tint = Color(0xFFD4AF37),
+                                modifier = Modifier.size(20.dp).padding(top = 2.dp)
+                            )
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Column {
+                                Text(
+                                    text = "White-Label Brand & Data Shield: ACTIVE",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 12.sp,
+                                    color = Color(0xFFD4AF37)
+                                )
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Text(
+                                    text = "Framework updates will strictly preserve your brand name, company logo, tax PIN, custom colors, and local order database. No white-label branding or client records are overwritten.",
+                                    fontSize = 11.sp,
+                                    lineHeight = 15.sp,
+                                    color = Color.LightGray
+                                )
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    // Channel & Version Details
+                    Surface(
+                        shape = MaterialTheme.shapes.small,
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                Text("Current Engine Version:", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text("v${updateInfo.currentVersionName} (Build ${updateInfo.currentVersionCode})", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelMedium)
+                            }
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                Text("Update Channel:", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text("Development Framework Live", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.labelMedium)
+                            }
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                Text("Framework Endpoint:", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                val endpointShort = if (updateInfo.frameworkEndpoint.length > 25) {
+                                    updateInfo.frameworkEndpoint.take(22) + "..."
+                                } else {
+                                    updateInfo.frameworkEndpoint
+                                }
+                                Text(endpointShort, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                            }
+                        }
+                    }
+
+                    if (updateInfo.isUpdateAvailable) {
+                        Spacer(modifier = Modifier.height(10.dp))
+                        Surface(
+                            shape = MaterialTheme.shapes.small,
+                            color = MaterialTheme.colorScheme.primaryContainer,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(modifier = Modifier.padding(12.dp)) {
+                                Text(
+                                    text = "Upcoming Release: ${updateInfo.releaseTitle}",
+                                    fontWeight = FontWeight.Bold,
+                                    style = MaterialTheme.typography.titleSmall,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = updateInfo.releaseNotes,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                                )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        Button(
+                            onClick = {
+                                coroutineScope.launch {
+                                    val result = updateManager.applyUpdateWithWhiteLabelShield(
+                                        repository = repository,
+                                        actorId = activeStaff.id,
+                                        actorName = activeStaff.name
+                                    )
+                                    result.fold(
+                                        onSuccess = { msg ->
+                                            Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+                                        },
+                                        onFailure = { err ->
+                                            Toast.makeText(context, "Update failed: ${err.message}", Toast.LENGTH_LONG).show()
+                                        }
+                                    )
+                                }
+                            },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("apply_framework_update_btn"),
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                        ) {
+                            if (isApplyingUpdate) {
+                                CircularProgressIndicator(modifier = Modifier.size(16.dp), color = MaterialTheme.colorScheme.onPrimary, strokeWidth = 2.dp)
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("Applying Framework Engine Update...")
+                            } else {
+                                Icon(imageVector = Icons.Default.SystemUpdateAlt, contentDescription = "Apply", modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("Apply Framework Update (Shield Active)")
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    OutlinedButton(
+                        onClick = {
+                            coroutineScope.launch {
+                                val info = updateManager.checkForUpdates(companyProfile.frameworkDevUrl)
+                                if (info.isUpdateAvailable) {
+                                    Toast.makeText(context, "New update available: v${info.latestVersionName}", Toast.LENGTH_SHORT).show()
+                                } else {
+                                    Toast.makeText(context, "Framework is currently up to date", Toast.LENGTH_SHORT).show()
+                                }
+                            }
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("check_framework_updates_btn")
+                    ) {
+                        if (isCheckingUpdate) {
+                            CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Querying Development Framework...")
+                        } else {
+                            Icon(imageVector = Icons.Default.CloudDownload, contentDescription = "Check", modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Check Development Framework for Updates")
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -825,6 +1279,78 @@ fun AppSettingsScreen(
     // Dialog: About Zayed SalesForce
     if (showAboutDialog) {
         AboutZayedDialog(onDismiss = { showAboutDialog = false })
+    }
+
+    // Dialog: Unlock Supabase Configuration
+    if (showUnlockSupabaseDialog) {
+        AlertDialog(
+            onDismissRequest = {
+                showUnlockSupabaseDialog = false
+                unlockPinError = null
+            },
+            title = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(imageVector = Icons.Default.LockOpen, contentDescription = "Unlock", tint = MaterialTheme.colorScheme.primary)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Unlock Supabase Settings")
+                }
+            },
+            text = {
+                Column {
+                    Text(
+                        text = "Enter Executive Admin PIN (22026) to reveal and reconfigure the linked Supabase project endpoint and API keys.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    OutlinedTextField(
+                        value = unlockPinInput,
+                        onValueChange = {
+                            if (it.length <= 8) {
+                                unlockPinInput = it
+                                unlockPinError = null
+                            }
+                        },
+                        label = { Text("Executive Admin PIN") },
+                        isError = unlockPinError != null,
+                        supportingText = { unlockPinError?.let { Text(it, color = MaterialTheme.colorScheme.error) } },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+                        visualTransformation = PasswordVisualTransformation(),
+                        singleLine = true,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("unlock_supabase_pin_input")
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        coroutineScope.launch {
+                            val unlocked = repository.unlockSupabaseConfig(unlockPinInput)
+                            if (unlocked) {
+                                showUnlockSupabaseDialog = false
+                                unlockPinError = null
+                                Toast.makeText(context, "Supabase settings unlocked for administrative configuration", Toast.LENGTH_SHORT).show()
+                            } else {
+                                unlockPinError = "Invalid Admin PIN. Authorized administrators only."
+                            }
+                        }
+                    },
+                    modifier = Modifier.testTag("confirm_unlock_supabase_btn")
+                ) {
+                    Text("Unlock")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    showUnlockSupabaseDialog = false
+                    unlockPinError = null
+                }) {
+                    Text("Cancel")
+                }
+            }
+        )
     }
 }
 

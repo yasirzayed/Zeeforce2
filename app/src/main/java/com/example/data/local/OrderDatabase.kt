@@ -19,6 +19,8 @@ import com.example.data.model.CommissionRecord
 import com.example.data.model.CustomerOrder
 import com.example.data.local.SupplierDao
 
+import com.example.data.model.AdminAuditLog
+
 @Database(
     entities = [
         Customer::class,
@@ -33,9 +35,10 @@ import com.example.data.local.SupplierDao
         Supplier::class,
         SupplierProduct::class,
         SupplierOrder::class,
-        SupplierOrderItem::class
+        SupplierOrderItem::class,
+        AdminAuditLog::class
     ],
-    version = 11,
+    version = 12,
     exportSchema = false
 )
 abstract class OrderDatabase : RoomDatabase() {
@@ -49,6 +52,7 @@ abstract class OrderDatabase : RoomDatabase() {
     abstract fun staffActivityDao(): StaffActivityDao
     abstract fun supplierDao(): SupplierDao
     abstract fun supplierOrderDao(): SupplierOrderDao
+    abstract fun adminAuditLogDao(): AdminAuditLogDao
 
     companion object {
         @Volatile

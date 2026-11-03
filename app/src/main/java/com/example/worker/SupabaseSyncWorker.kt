@@ -46,6 +46,7 @@ class SupabaseSyncWorker(
                     "SUPPLIER_PRODUCT" -> "supplier_products"
                     "SUPPLIER_ORDER" -> "supplier_orders"
                     "SUPPLIER_ORDER_ITEM" -> "supplier_order_items"
+                    "AUDIT_LOG" -> "admin_audit_logs"
                     else -> "records"
                 }
                 
@@ -63,6 +64,7 @@ class SupabaseSyncWorker(
                         "ORDER" -> orderDao.markAsSynced(item.entityId)
                         "ORDER_STATUS" -> orderDao.markAsSynced(item.entityId)
                         "COMMISSION" -> commissionDao.markSynced(item.entityId)
+                        "AUDIT_LOG" -> database.adminAuditLogDao().markSynced(item.entityId)
                     }
                 } else {
                     syncQueueDao.markFailed(item.id, syncCall.exceptionOrNull()?.message ?: "Sync error")

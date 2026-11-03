@@ -165,6 +165,26 @@ CREATE TABLE IF NOT EXISTS public.supplier_order_items (
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- 11. Immutable Admin Audit Logs (Multi-Tenant Compliance & Tamper-Evident SHA-256 Trail)
+CREATE TABLE IF NOT EXISTS public.admin_audit_logs (
+    id TEXT PRIMARY KEY,
+    timestamp BIGINT NOT NULL,
+    tenant_id TEXT NOT NULL,
+    actor_id TEXT,
+    actor_name TEXT,
+    actor_role TEXT,
+    action TEXT NOT NULL,
+    entity_type TEXT NOT NULL,
+    entity_id TEXT NOT NULL,
+    field_name TEXT,
+    old_value TEXT,
+    new_value TEXT,
+    reason TEXT,
+    signature TEXT NOT NULL,
+    is_tampered BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
 -- Enable RLS on all tables
 ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.customers ENABLE ROW LEVEL SECURITY;
@@ -176,6 +196,7 @@ ALTER TABLE public.suppliers ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.supplier_products ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.supplier_orders ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.supplier_order_items ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.admin_audit_logs ENABLE ROW LEVEL SECURITY;
 
 -- Idempotent Policies: Drop if already existing before creating (avoids error 42710)
 DROP POLICY IF EXISTS "Public full access" ON public.profiles;
@@ -207,3 +228,7 @@ CREATE POLICY "Public full access" ON public.supplier_orders FOR ALL USING (true
 
 DROP POLICY IF EXISTS "Public full access" ON public.supplier_order_items;
 CREATE POLICY "Public full access" ON public.supplier_order_items FOR ALL USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Public full access" ON public.admin_audit_logs;
+CREATE POLICY "Public full access" ON public.admin_audit_logs FOR ALL USING (true) WITH CHECK (true);
+

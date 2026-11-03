@@ -46,10 +46,13 @@ class OrderBookingRepository(
     private val staffDao = database.staffDao()
     private val commissionDao = database.commissionDao()
     private val staffActivityDao = database.staffActivityDao()
+    private val adminAuditLogDao = database.adminAuditLogDao()
+    private val conflictResolver = com.example.data.remote.SyncConflictResolver(context)
 
     val allOrders: Flow<List<OrderWithItems>> = orderDao.getAllOrdersWithItems()
     val allCommissions: Flow<List<com.example.data.model.CommissionRecord>> = commissionDao.getAllCommissions()
     val allActivities: Flow<List<StaffActivityLog>> = staffActivityDao.getAllActivities()
+    val allAuditLogs: Flow<List<com.example.data.model.AdminAuditLog>> = adminAuditLogDao.getAllLogsFlow()
     val allCustomers: Flow<List<Customer>> = customerDao.getAllCustomers()
     val allActiveCustomers: Flow<List<Customer>> = customerDao.getAllActiveCustomers()
     val archivedCustomers: Flow<List<Customer>> = customerDao.getArchivedCustomers()
@@ -104,7 +107,14 @@ class OrderBookingRepository(
             syncOnlyOnWifi = prefs.getBoolean("sync_only_on_wifi", base.syncOnlyOnWifi),
             pauseSyncOnLowBattery = prefs.getBoolean("pause_sync_low_battery", base.pauseSyncOnLowBattery),
             gzipCompressionEnabled = prefs.getBoolean("gzip_compression_enabled", base.gzipCompressionEnabled),
-            sessionTimeoutMinutes = prefs.getInt("session_timeout_minutes", base.sessionTimeoutMinutes)
+            sessionTimeoutMinutes = prefs.getInt("session_timeout_minutes", base.sessionTimeoutMinutes),
+            tenantId = prefs.getString("tenant_id", base.tenantId) ?: base.tenantId,
+            isSupabaseConfigLocked = prefs.getBoolean("is_supabase_config_locked", base.isSupabaseConfigLocked),
+            isWhiteLabeled = prefs.getBoolean("is_white_labeled", base.isWhiteLabeled),
+            lastVerifiedSyncTimestamp = prefs.getLong("last_verified_sync_timestamp", base.lastVerifiedSyncTimestamp),
+            supabaseUrl = prefs.getString("supabase_url", base.supabaseUrl) ?: base.supabaseUrl,
+            supabaseAnonKey = prefs.getString("supabase_anon_key", base.supabaseAnonKey) ?: base.supabaseAnonKey,
+            frameworkDevUrl = prefs.getString("framework_dev_url", base.frameworkDevUrl) ?: base.frameworkDevUrl
         )
     }
 
@@ -138,6 +148,13 @@ class OrderBookingRepository(
             .putBoolean("pause_sync_low_battery", profile.pauseSyncOnLowBattery)
             .putBoolean("gzip_compression_enabled", profile.gzipCompressionEnabled)
             .putInt("session_timeout_minutes", profile.sessionTimeoutMinutes)
+            .putString("tenant_id", profile.tenantId)
+            .putBoolean("is_supabase_config_locked", profile.isSupabaseConfigLocked)
+            .putBoolean("is_white_labeled", profile.isWhiteLabeled)
+            .putLong("last_verified_sync_timestamp", profile.lastVerifiedSyncTimestamp)
+            .putString("supabase_url", profile.supabaseUrl)
+            .putString("supabase_anon_key", profile.supabaseAnonKey)
+            .putString("framework_dev_url", profile.frameworkDevUrl)
             .apply()
     }
 
@@ -370,6 +387,210 @@ class OrderBookingRepository(
     suspend fun updateSecondaryPin(newPin: String) = withContext(Dispatchers.IO) {
         val updated = _companyProfile.value.copy(secondaryStaffPin = newPin)
         updateCompanyProfile(updated)
+        recordAuditLog(
+            action = "SECONDARY_PIN_CHANGED",
+            entityType = "SECURITY",
+            entityId = "secondary-pin",
+            fieldName = "secondaryStaffPin",
+            oldValue = "******",
+            newValue = "******",
+            reason = "Secondary staff PIN renewed"
+        )
+    }
+
+    /**
+     * Records an immutable, cryptographically signed administrative audit log entry.
+     * Queues the entry to Supabase for compliance across all white-label instances.
+     */
+    suspend fun recordAuditLog(
+        action: String,
+        entityType: String,
+        entityId: String,
+        fieldName: String,
+        oldValue: String,
+        newValue: String,
+        reason: String = "Administrative operational change"
+    ): com.example.data.model.AdminAuditLog = withContext(Dispatchers.IO) {
+        val staff = _activeStaff.value
+        val tenant = _companyProfile.value.tenantId
+        val log = com.example.data.model.AdminAuditLog.create(
+            tenantId = tenant,
+            actorId = staff.id,
+            actorName = staff.name,
+            actorEmail = staff.email,
+            action = action,
+            entityType = entityType,
+            entityId = entityId,
+            fieldName = fieldName,
+            oldValue = oldValue,
+            newValue = newValue,
+            reason = reason
+        )
+        adminAuditLogDao.insertLog(log)
+
+        val json = JSONObject().apply {
+            put("id", log.id)
+            put("timestamp", log.timestamp)
+            put("tenant_id", log.tenantId)
+            put("actor_id", log.actorId)
+            put("actor_name", log.actorName)
+            put("actor_email", log.actorEmail)
+            put("action", log.action)
+            put("entity_type", log.entityType)
+            put("entity_id", log.entityId)
+            put("field_name", log.fieldName)
+            put("old_value", log.oldValue)
+            put("new_value", log.newValue)
+            put("reason", log.reason)
+            put("hash_signature", log.hashSignature)
+        }.toString()
+
+        enqueueAndTriggerSync(
+            SyncQueueItem(
+                entityType = "AUDIT_LOG",
+                entityId = log.id,
+                payloadJson = json
+            )
+        )
+        log
+    }
+
+    /**
+     * Verifies, tests, and links a white-label Supabase cloud backend.
+     * Once verified and initial sync succeeds, automatically locks the configuration to avoid accidental corruption.
+     */
+    suspend fun verifyAndLinkSupabaseProject(
+        url: String,
+        anonKey: String,
+        tenantId: String
+    ): Result<String> = withContext(Dispatchers.IO) {
+        val cleanUrl = url.trim().removeSuffix("/")
+        val cleanKey = anonKey.trim()
+        val cleanTenant = tenantId.trim().ifEmpty { "tenant_${System.currentTimeMillis()}" }
+
+        if (!cleanUrl.startsWith("http://") && !cleanUrl.startsWith("https://")) {
+            return@withContext Result.failure(IllegalArgumentException("Invalid URL: Must start with http:// or https://"))
+        }
+        if (cleanKey.isEmpty()) {
+            return@withContext Result.failure(IllegalArgumentException("Supabase Anon Key cannot be empty"))
+        }
+
+        try {
+            // Update client configuration and run connectivity probe
+            syncService.supabaseClient.updateConfig(cleanUrl, cleanKey)
+            val health = syncService.testConnection()
+            if (!health.isConnected) {
+                return@withContext Result.failure(IllegalStateException("Supabase endpoint unreachable: ${health.message}"))
+            }
+
+            // Run initial bidirectional sync and conflict reconciliation
+            val reconcileReport = reconcileWithRemote()
+
+            // Update company profile with locked status
+            val oldUrl = _companyProfile.value.supabaseUrl
+            val updated = _companyProfile.value.copy(
+                supabaseUrl = cleanUrl,
+                supabaseAnonKey = cleanKey,
+                tenantId = cleanTenant,
+                isSupabaseConfigLocked = true,
+                lastVerifiedSyncTimestamp = System.currentTimeMillis()
+            )
+            updateCompanyProfile(updated)
+
+            // Record immutable audit log
+            recordAuditLog(
+                action = "SUPABASE_LINKED",
+                entityType = "BACKEND",
+                entityId = cleanTenant,
+                fieldName = "supabaseUrl",
+                oldValue = oldUrl,
+                newValue = cleanUrl,
+                reason = "Verified and linked Supabase backend for multi-tenant white-label sync. Config locked automatically."
+            )
+
+            Result.success("Connected to $cleanUrl (${health.latencyMs}ms). Initial sync: ${reconcileReport.details}. Configuration locked for security.")
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * Authenticates executive administrator via Master/Admin PIN to unlock Supabase configuration.
+     */
+    suspend fun unlockSupabaseConfig(pin: String): Boolean = withContext(Dispatchers.IO) {
+        if (verifyAdminPin(pin)) {
+            val updated = _companyProfile.value.copy(isSupabaseConfigLocked = false)
+            updateCompanyProfile(updated)
+            recordAuditLog(
+                action = "SUPABASE_UNLOCKED",
+                entityType = "BACKEND",
+                entityId = _companyProfile.value.tenantId,
+                fieldName = "isSupabaseConfigLocked",
+                oldValue = "true",
+                newValue = "false",
+                reason = "Executive administrator unlocked cloud backend credentials"
+            )
+            true
+        } else {
+            false
+        }
+    }
+
+    /**
+     * Executes bidirectional data reconciliation: pulls manual updates from Supabase webapps,
+     * resolves data conflicts deterministically, and pushes local pending offline outbox items.
+     */
+    suspend fun reconcileWithRemote(): com.example.data.remote.ConflictResolutionReport = withContext(Dispatchers.IO) {
+        val tenant = _companyProfile.value.tenantId
+        var totalPulled = 0
+        var applied = 0
+        var conflicts = 0
+        val allLogs = mutableListOf<com.example.data.model.AdminAuditLog>()
+
+        try {
+            // 1. Fetch remote products
+            val productsRes = syncService.supabaseClient.db.fetchRecords("products", limit = 150)
+            if (productsRes.isSuccess) {
+                val report = conflictResolver.reconcileProducts(productsRes.getOrDefault("[]"), tenant)
+                totalPulled += report.totalPulled
+                applied += report.appliedDirectly
+                conflicts += report.conflictsResolved
+                allLogs.addAll(report.auditLogsGenerated)
+            }
+
+            // 2. Fetch remote customers
+            val customersRes = syncService.supabaseClient.db.fetchRecords("customers", limit = 150)
+            if (customersRes.isSuccess) {
+                val report = conflictResolver.reconcileCustomers(customersRes.getOrDefault("[]"), tenant)
+                totalPulled += report.totalPulled
+                applied += report.appliedDirectly
+                conflicts += report.conflictsResolved
+                allLogs.addAll(report.auditLogsGenerated)
+            }
+
+            // 3. Fetch remote orders
+            val ordersRes = syncService.supabaseClient.db.fetchRecords("orders", limit = 150)
+            if (ordersRes.isSuccess) {
+                val report = conflictResolver.reconcileOrders(ordersRes.getOrDefault("[]"), tenant)
+                totalPulled += report.totalPulled
+                applied += report.appliedDirectly
+                conflicts += report.conflictsResolved
+                allLogs.addAll(report.auditLogsGenerated)
+            }
+
+            // 4. Trigger push of local pending queue to complete bidirectional sync
+            triggerImmediateSync()
+        } catch (e: Exception) {
+            android.util.Log.e("Repository", "Remote reconciliation error: ${e.message}", e)
+        }
+
+        com.example.data.remote.ConflictResolutionReport(
+            totalPulled = totalPulled,
+            appliedDirectly = applied,
+            conflictsResolved = conflicts,
+            auditLogsGenerated = allLogs,
+            details = "$totalPulled checked, $applied applied, $conflicts conflicts resolved"
+        )
     }
 
     suspend fun clearTransientCache(): Long = withContext(Dispatchers.IO) {

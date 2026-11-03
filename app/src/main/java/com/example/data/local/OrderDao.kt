@@ -21,6 +21,9 @@ interface OrderDao {
     @Query("SELECT * FROM orders WHERE id = :orderId LIMIT 1")
     suspend fun getOrderWithItemsById(orderId: String): OrderWithItems?
 
+    @Query("SELECT * FROM orders WHERE id = :orderId LIMIT 1")
+    suspend fun getOrderById(orderId: String): OrderEntity?
+
     @Transaction
     @Query("SELECT * FROM orders WHERE isSynced = 0")
     suspend fun getUnsyncedOrders(): List<OrderWithItems>

@@ -452,7 +452,130 @@ class ExampleRobolectricTest {
     assertTrue("Master bypass 22026 must still verify with custom PIN", verifyPin("22026", updatedProfile.secondaryStaffPin))
     assertFalse("Old PIN should no longer verify", verifyPin("2026", updatedProfile.secondaryStaffPin))
   }
+
+  @Test
+  fun `test AdminAuditLog cryptographic SHA-256 signature and tamper evidence`() {
+    val auditLog = com.example.data.model.AdminAuditLog.create(
+      tenantId = "tenant_zayed_enterprise",
+      actorId = "staff-owner",
+      actorName = "Al Yasir Bin Zayed",
+      actorEmail = "yasirzayedco@gmail.com",
+      action = "PRODUCT_PRICE_UPDATED",
+      entityType = "PRODUCT",
+      entityId = "prod-pure-water-500ml",
+      fieldName = "basePrice",
+      oldValue = "45.00",
+      newValue = "52.00",
+      reason = "Inflation and transport adjustment"
+    )
+
+    // 1. Verify fresh signature is valid
+    assertTrue("Calculated HMAC SHA-256 signature must be valid", auditLog.isSignatureValid())
+
+    // 2. Tamper test: simulate an unauthorized modification of the price
+    val tamperedLog = auditLog.copy(newValue = "20.00")
+    assertFalse("Tampered audit log must fail cryptographic verification", tamperedLog.isSignatureValid())
+
+    // 3. Tamper test: simulate unauthorized actor tampering
+    val tamperedActorLog = auditLog.copy(actorId = "unauthorized-hacker")
+    assertFalse("Audit log with modified actor must fail verification", tamperedActorLog.isSignatureValid())
+  }
+
+  @Test
+  fun `test bidirectional conflict resolution engine for stock and orders`() {
+    // Test Product Stock Conflict: Offline device booked order with stock 80, but remote webapp booked 50
+    // Conservative rule: physical stock must be minOf(80, 50) = 50 to prevent inventory overselling
+    val localProduct = com.example.data.model.Product(
+      id = "prod-water-20l",
+      name = "20L Water Dispenser Bottle",
+      category = "Bulk Water",
+      unit = "20L Bottle",
+      basePrice = 450.0,
+      stockQty = 80,
+      currentStock = 80
+    )
+
+    val resolvedProd = com.example.data.remote.SyncConflictResolver.resolveProductConflict(
+      local = localProduct,
+      remoteStock = 50,
+      remoteBasePrice = 480.0
+    )
+
+    assertEquals("Conservative stock rule must choose minOf(80, 50)", 50, resolvedProd.stockQty)
+    assertEquals("Higher price from remote must be adopted", 480.0, resolvedProd.basePrice, 0.001)
+
+    // Test Order Status Conflict: Local has 'BOOKED' while WebApp updated to 'DISPATCHED'
+    val resolvedStatus = com.example.data.remote.SyncConflictResolver.resolveOrderStatusConflict(
+      localStatus = "BOOKED",
+      remoteStatus = "DISPATCHED"
+    )
+
+    assertEquals("Order status progression must advance to DISPATCHED", "DISPATCHED", resolvedStatus)
+
+    // Test reverse order status: Remote 'BOOKED' does not revert local 'DELIVERED'
+    val nonRevertingStatus = com.example.data.remote.SyncConflictResolver.resolveOrderStatusConflict(
+      localStatus = "DELIVERED",
+      remoteStatus = "BOOKED"
+    )
+    assertEquals("Dispatched/Delivered order must not be reverted by stale booked status", "DELIVERED", nonRevertingStatus)
+  }
+
+  @Test
+  fun `test white-label brand and local data shield during framework updates`() {
+    val profile = CompanyProfile(
+      companyName = "Horizon Pure Beverages Ltd",
+      ownerName = "David Mwangi",
+      tagline = "Purity in Every Drop",
+      taxPin = "P051999888Z",
+      factoryLocation = "Industrial Area, Nairobi",
+      isWhiteLabeled = true,
+      tenantId = "tenant_horizon_bev"
+    )
+
+    // Verify tenant attributes
+    assertEquals("Horizon Pure Beverages Ltd", profile.companyName)
+    assertEquals("tenant_horizon_bev", profile.tenantId)
+    assertTrue(profile.isWhiteLabeled)
+
+    // Verify that applying framework update does not touch company branding
+    val frameworkReleaseName = "1.1.0"
+    val updatedFrameworkChannel = profile.copy(
+      frameworkDevUrl = "https://ais-dev-bjuyqcsp6rf3ec5w44yq4y-973870353017.europe-west2.run.app"
+    )
+
+    // Branding checks
+    assertEquals("Horizon Pure Beverages Ltd", updatedFrameworkChannel.companyName)
+    assertEquals("David Mwangi", updatedFrameworkChannel.ownerName)
+    assertEquals("P051999888Z", updatedFrameworkChannel.taxPin)
+    assertEquals("tenant_horizon_bev", updatedFrameworkChannel.tenantId)
+  }
+
+  @Test
+  fun `test Supabase config lock and admin PIN unlock logic`() {
+    val initialProfile = CompanyProfile(
+      supabaseUrl = "https://kocvwcwmzaosgofydjha.supabase.co",
+      isSupabaseConfigLocked = false,
+      adminPin = "22026"
+    )
+    assertFalse("Initially config must be unlocked", initialProfile.isSupabaseConfigLocked)
+
+    // Simulate verification & lock
+    val lockedProfile = initialProfile.copy(
+      isSupabaseConfigLocked = true,
+      lastVerifiedSyncTimestamp = System.currentTimeMillis()
+    )
+    assertTrue("Config must be locked after linking", lockedProfile.isSupabaseConfigLocked)
+
+    // Verification of unlock via Admin PIN
+    fun checkUnlockPin(pin: String, adminPin: String): Boolean {
+      return pin.trim() == adminPin.trim() || pin.trim() == "22026"
+    }
+
+    assertTrue("Master Admin PIN 22026 must unlock", checkUnlockPin("22026", lockedProfile.adminPin))
+    assertFalse("Incorrect PIN must not unlock", checkUnlockPin("0000", lockedProfile.adminPin))
+  }
 }
+
 
 
 

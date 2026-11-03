@@ -36,7 +36,13 @@ data class CompanyProfile(
     val syncOnlyOnWifi: Boolean = false,
     val pauseSyncOnLowBattery: Boolean = true,
     val gzipCompressionEnabled: Boolean = true,
-    val sessionTimeoutMinutes: Int = 30
+    val sessionTimeoutMinutes: Int = 30,
+    // Multi-tenant White-Label & Cloud Governance
+    val tenantId: String = "tenant_zayed_enterprise",
+    val isSupabaseConfigLocked: Boolean = false,
+    val isWhiteLabeled: Boolean = false,
+    val lastVerifiedSyncTimestamp: Long = 0L,
+    val frameworkDevUrl: String = "https://ais-dev-bjuyqcsp6rf3ec5w44yq4y-973870353017.europe-west2.run.app"
 )
 
 data class RegionalPricingConfig(

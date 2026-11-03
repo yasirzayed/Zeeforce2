@@ -183,6 +183,8 @@ class OrderBookingViewModel(application: Application) : AndroidViewModel(applica
     val lastSyncResult: StateFlow<SyncResult?> = repository.lastSyncResult
     val allActivities: StateFlow<List<StaffActivityLog>> = repository.allActivities
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+    val allAuditLogs: StateFlow<List<com.example.data.model.AdminAuditLog>> = repository.allAuditLogs
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     fun verifyAdminPinForDashboard(
         pin: String,

@@ -137,11 +137,13 @@ fun SalesForceAppContent(
                 val activities by viewModel.allActivities.collectAsState()
                 val staff by viewModel.allStaff.collectAsState()
                 val activeStaff by viewModel.activeStaff.collectAsState()
+                val auditLogs by viewModel.allAuditLogs.collectAsState()
                 
                 AdminDashboardModuleScreen(
                     currentStaff = activeStaff,
                     activities = activities,
                     staffList = staff,
+                    auditLogs = auditLogs,
                     onVerifyPin = { pin, onSuccess, onError ->
                         viewModel.verifyAdminPinForDashboard(pin, onSuccess, onError)
                     },

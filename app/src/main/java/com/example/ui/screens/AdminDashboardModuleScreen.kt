@@ -37,6 +37,7 @@ fun AdminDashboardModuleScreen(
     currentStaff: StaffMember,
     activities: List<StaffActivityLog>,
     staffList: List<StaffMember>,
+    auditLogs: List<com.example.data.model.AdminAuditLog> = emptyList(),
     onVerifyPin: (pin: String, onSuccess: () -> Unit, onError: (String) -> Unit) -> Unit,
     onBack: () -> Unit,
     modifier: Modifier = Modifier
@@ -236,8 +237,32 @@ fun AdminDashboardModuleScreen(
                     .padding(padding)
                     .padding(16.dp)
             ) {
-                // Filter Row
-                Row(
+                var selectedMainTab by remember { mutableStateOf(0) }
+
+                TabRow(
+                    selectedTabIndex = selectedMainTab,
+                    containerColor = cardNavy,
+                    contentColor = imperialGold,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(10.dp))
+                        .padding(bottom = 12.dp)
+                ) {
+                    Tab(
+                        selected = selectedMainTab == 0,
+                        onClick = { selectedMainTab = 0 },
+                        text = { Text("Operations Logs (${activities.size})", fontWeight = FontWeight.Bold, fontSize = 12.sp) }
+                    )
+                    Tab(
+                        selected = selectedMainTab == 1,
+                        onClick = { selectedMainTab = 1 },
+                        text = { Text("Immutable Audit Trail (${auditLogs.size})", fontWeight = FontWeight.Bold, fontSize = 12.sp) }
+                    )
+                }
+
+                if (selectedMainTab == 0) {
+                    // Filter Row
+                    Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
@@ -392,6 +417,144 @@ fun AdminDashboardModuleScreen(
                                             fontSize = 10.sp,
                                             color = Color.Gray
                                         )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            } else {
+                // Immutable Compliance Audit Trail (Supabase)
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f)
+                    ) {
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = cardNavy,
+                            border = BorderStroke(1.dp, imperialGold.copy(alpha = 0.4f)),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(bottom = 12.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(12.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Shield,
+                                    contentDescription = "Shield",
+                                    tint = imperialGold,
+                                    modifier = Modifier.size(24.dp)
+                                )
+                                Spacer(modifier = Modifier.width(10.dp))
+                                Column {
+                                    Text(
+                                        text = "Tamper-Evident Immutable Audit Log",
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 12.sp,
+                                        color = imperialGold
+                                    )
+                                    Text(
+                                        text = "Every pricing, stock, customer, permission, and cloud configuration change is signed with SHA-256 for non-repudiation.",
+                                        fontSize = 10.sp,
+                                        color = Color.LightGray
+                                    )
+                                }
+                            }
+                        }
+
+                        if (auditLogs.isEmpty()) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .weight(1f),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                    Icon(Icons.Default.Verified, contentDescription = null, tint = imperialGold, modifier = Modifier.size(48.dp))
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    Text("No sensitive modifications recorded yet.", color = Color.Gray, fontSize = 14.sp)
+                                    Text("Changes to prices, stock, PINs, and cloud sync will appear here.", color = Color.DarkGray, fontSize = 11.sp)
+                                }
+                            }
+                        } else {
+                            LazyColumn(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .weight(1f),
+                                verticalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                items(auditLogs) { log ->
+                                    val isValid = log.isSignatureValid()
+                                    Card(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .testTag("audit_log_item_${log.id}"),
+                                        shape = RoundedCornerShape(12.dp),
+                                        colors = CardDefaults.cardColors(containerColor = cardNavy),
+                                        border = BorderStroke(1.dp, if (isValid) borderNavy else Color(0xFFEF4444))
+                                    ) {
+                                        Column(modifier = Modifier.padding(14.dp)) {
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Surface(
+                                                    shape = RoundedCornerShape(4.dp),
+                                                    color = imperialGold.copy(alpha = 0.2f)
+                                                ) {
+                                                    Text(
+                                                        text = log.action.replace("_", " "),
+                                                        fontSize = 10.sp,
+                                                        fontWeight = FontWeight.Bold,
+                                                        color = imperialGold,
+                                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                                    )
+                                                }
+
+                                                Surface(
+                                                    shape = RoundedCornerShape(4.dp),
+                                                    color = if (isValid) Color(0xFF34D399).copy(alpha = 0.2f) else Color(0xFFEF4444).copy(alpha = 0.2f)
+                                                ) {
+                                                    Text(
+                                                        text = if (isValid) "✓ SHA-256 Valid" else "⚠ TAMPERED",
+                                                        fontSize = 9.sp,
+                                                        fontWeight = FontWeight.Bold,
+                                                        color = if (isValid) Color(0xFF34D399) else Color(0xFFEF4444),
+                                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                                    )
+                                                }
+                                            }
+
+                                            Spacer(modifier = Modifier.height(6.dp))
+
+                                            Text(
+                                                text = "${log.entityType} [${log.fieldName}]: ${log.oldValue} ➔ ${log.newValue}",
+                                                fontWeight = FontWeight.Bold,
+                                                fontSize = 12.sp,
+                                                color = Color.White
+                                            )
+
+                                            Spacer(modifier = Modifier.height(2.dp))
+
+                                            Text(
+                                                text = "Reason: ${log.reason}",
+                                                fontSize = 11.sp,
+                                                color = Color.LightGray
+                                            )
+
+                                            Spacer(modifier = Modifier.height(4.dp))
+
+                                            val dateStr = SimpleDateFormat("dd MMM yyyy, hh:mm:ss a", Locale.getDefault()).format(Date(log.timestamp))
+                                            Text(
+                                                text = "$dateStr • Actor: ${log.actorName} (${log.actorEmail}) • Tenant: ${log.tenantId}",
+                                                fontSize = 10.sp,
+                                                color = Color.Gray
+                                            )
+                                        }
                                     }
                                 }
                             }

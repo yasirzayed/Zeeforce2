@@ -42,6 +42,7 @@ class AutoSyncManager private constructor(private val appContext: Context) {
     private val customerDao = database.customerDao()
     private val orderDao = database.orderDao()
     private val commissionDao = database.commissionDao()
+    private val adminAuditLogDao = database.adminAuditLogDao()
     private val syncService = SupabaseSyncService(appContext)
 
     private val _isOnline = MutableStateFlow(false)
@@ -233,6 +234,7 @@ class AutoSyncManager private constructor(private val appContext: Context) {
                         "SUPPLIER_PRODUCT" -> "supplier_products"
                         "SUPPLIER_ORDER" -> "supplier_orders"
                         "SUPPLIER_ORDER_ITEM" -> "supplier_order_items"
+                        "AUDIT_LOG" -> "admin_audit_logs"
                         else -> "records"
                     }
 
@@ -250,6 +252,7 @@ class AutoSyncManager private constructor(private val appContext: Context) {
                             "ORDER" -> orderDao.markAsSynced(item.entityId)
                             "ORDER_STATUS" -> orderDao.markAsSynced(item.entityId)
                             "COMMISSION" -> commissionDao.markSynced(item.entityId)
+                            "AUDIT_LOG" -> adminAuditLogDao.markSynced(item.entityId)
                         }
                     } else {
                         val errMsg = syncCall.exceptionOrNull()?.message ?: "Sync error"
