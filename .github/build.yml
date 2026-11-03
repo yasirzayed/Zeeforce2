@@ -1,1 +1,309 @@
+Skip to content
+DEV Community
+Find related posts...
+Powered by Algolia 
+Log in
+Create account
 
+5
+Jump to Comments
+
+1
+Save
+
+Boost
+
+ronynn
+ronynn
+Posted on Mar 30, 2025
+•
+Edited on Sep 19
+
+
+
+6
+Automating Android APK Builds with GitHub Actions (The Sane Way)
+#
+tutorial
+#
+beginners
+#
+android
+#
+github
+Karui (4 Part Series)
+1
+Karui: My 84KB Unix-Inspired Android App Just Got GitHub’s Star Struck Badge!
+2
+Getting my app into IzzyOnDroid: Making It Fully Reproducible
+3
+Automating Android APK Builds with GitHub Actions (The Sane Way)
+4
+What your app's text input bar tells about you?
+Manually building and signing an APK every time you make a change? Nah, that’s a waste of time. The right way to do it is to automate the entire process using GitHub Actions. That way, every push or tag automatically triggers a clean, reproducible build.
+
+Here’s how to set up GitHub Actions to build your Android APK (the sane way).
+
+1. Create a .github/workflows/build.yml File
+Inside your repo, make this directory and file:
+
+.github/workflows/build.yml
+Now, paste this inside:
+
+name: Build Android APK
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    name: Build APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK
+        uses: actions/setup-java@v3
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Gradle cache
+        uses: gradle/gradle-build-action@v3
+
+      - name: Build debug APK
+        run: ./gradlew assembleDebug
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v5
+        with:
+          name: Karui-APK
+          path: app/build/outputs/apk/debug/app-debug.apk
+This workflow:
+✅ Runs on Ubuntu (clean environment)
+✅ Uses Java 17 (modify if needed)
+✅ Caches Gradle for faster builds
+✅ Builds a debug APK
+✅ Uploads the APK as an artifact (so you can download it)
+
+2. Adding Signing for a Release APK
+If you want to distribute a signed APK (for Play Store or F-Droid), modify the workflow:
+
+Step 1: Store Your Keystore Securely
+Convert your keystore to Base64 (so GitHub can store it as a secret):
+base64 -w 0 my-release-key.jks > keystore.b64
+
+Copy the contents of keystore.b64.
+
+Go to GitHub → Your Repo → Settings → Secrets and variables → Actions → New Repository Secret
+
+Add a new secret:
+
+Name: ANDROID_KEYSTORE
+
+Value: Paste the Base64 string
+
+Step 2: Add Keystore Passwords as Secrets
+Also add these secrets:
+
+KEYSTORE_PASSWORD – Your keystore password
+
+KEY_ALIAS – The alias of your key
+
+KEY_PASSWORD – Your key’s password
+
+Step 3: Modify build.yml to Sign the APK
+Now update the workflow:
+
+- name: Decode keystore
+        run: echo "${{ secrets.ANDROID_KEYSTORE }}" | base64 -d > my-release-key.jks
+
+      - name: Build release APK
+        run: ./gradlew assembleRelease
+
+      - name: Sign APK
+        run: |
+          jarsigner -verbose -sigalg SHA256withRSA -digestalg SHA-256 \
+            -keystore my-release-key.jks -storepass ${{ secrets.KEYSTORE_PASSWORD }} \
+            -keypass ${{ secrets.KEY_PASSWORD }} \
+            app/build/outputs/apk/release/app-release-unsigned.apk ${{ secrets.KEY_ALIAS }}
+
+      - name: Verify signature
+        run: jarsigner -verify -verbose -certs app/build/outputs/apk/release/app-release-unsigned.apk
+
+      - name: Align APK
+        run: |
+          $ANDROID_HOME/build-tools/34.0.0/zipalign -v 4 \
+            app/build/outputs/apk/release/app-release-unsigned.apk \
+            app/build/outputs/apk/release/app-release.apk
+
+      - name: Upload Signed APK
+        uses: actions/upload-artifact@v5
+        with:
+          name: Karui-Signed-APK
+          path: app/build/outputs/apk/release/app-release.apk
+This does:
+✅ Decodes the keystore
+✅ Builds a release APK
+✅ Signs it using jarsigner
+✅ Verifies the signature
+✅ Aligns it (important for efficiency)
+✅ Uploads the signed APK
+
+3. Results
+Now, every push to main will:
+
+Build a debug APK (for testing)
+
+Build & sign a release APK (ready for distribution)
+
+No more "works on my machine" nonsense. Every build is clean and reproducible.
+
+Check Out Karui
+I built Karui using this exact setup. 84KB, Unix-inspired, and built the right way—minimal, efficient, and reproducible.
+
+If you’re into simple, lightweight apps, give it a look. Maybe even steal my GitHub Actions workflow for your own projects!
+
+Karui (4 Part Series)
+1
+Karui: My 84KB Unix-Inspired Android App Just Got GitHub’s Star Struck Badge!
+2
+Getting my app into IzzyOnDroid: Making It Fully Reproducible
+3
+Automating Android APK Builds with GitHub Actions (The Sane Way)
+4
+What your app's text input bar tells about you?
+Top comments (5)
+Subscribe
+pic
+Add to the discussion
+
+Submit
+Preview
+ 
+ 
+yamin8000 profile image
+Yamin Siahmargooei
+•
+Feb 28
+
+Artifact actions v3 is deprecated and actions using that will fail instantly.
+github.blog/changelog/2024-04-16-d...
+
+
+2
+ likes
+Like
+
+Reply
+ 
+ 
+ronynn profile image
+ronynn 
+•
+Sep 19
+
+Thanks for bringing it to my attention. I'll update the post.
+
+I've seen even random google searches about actions leading to my own post even when other people are searching it, so I believe this post has been useful to others apart from myself. :)
+
+
+1
+ like
+Like
+
+Reply
+ 
+ 
+graham_bells_4bdbbc438d53 profile image
+Graham Bells
+•
+Oct 15 • Edited on Oct 15
+
+I find automating Android APK builds with GitHub Actions a practical way to save time, maintain consistent releases, and avoid repetitive manual work. Just as a well-organized development workflow helps manage projects efficiently, I use take home pay pro to help people understand their UK take-home salary after tax and National Insurance. If you want to make more informed decisions about your earnings and budget, click here to explore the calculator.
+
+
+1
+ like
+Like
+
+Reply
+Some comments may only be visible to logged-in visitors. Sign in to view all comments.
+
+Code of Conduct • Report abuse
+
+ronynn
+Follow
+Retro aesthetics and resource efficiency enthusiast. Interested in education software, computational humanities research, and simulation oriented game designs.
+Location
+Literally living in my code editor!
+Work
+Amayori Labs
+Joined
+Mar 4, 2025
+More from ronynn
+Getting my app into IzzyOnDroid: Making It Fully Reproducible
+#android #github #beginners #opensource
+Karui: My 84KB Unix-Inspired Android App Just Got GitHub’s Star Struck Badge!
+#programming #javascript #beginners #productivity
+name: Build Android APK
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    name: Build APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK
+        uses: actions/setup-java@v3
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Gradle cache
+        uses: gradle/gradle-build-action@v3
+
+      - name: Build debug APK
+        run: ./gradlew assembleDebug
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v5
+        with:
+          name: Karui-APK
+          path: app/build/outputs/apk/debug/app-debug.apk
+DEV Community — A space to discuss and keep up software development and manage your software career
+
+Home
+DEV Challenges
+DEV++
+Videos
+DEV Education Tracks
+DEV Help
+Advertise on DEV
+Organization Accounts
+DEV Showcase
+About
+Contact
+Free Postgres Database
+DEV Shop
+MLH
+Code of Conduct
+Privacy Policy
+Terms of Use
+Built on Forem — the open source software that powers DEV and other inclusive communities.
+
+Made with love and Ruby on Rails. DEV Community © 2016 - 2026.
